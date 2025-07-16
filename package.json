@@ -1,15 +1,10 @@
----
-
-## ✅ `package.json` (phiên bản 789Club)
-
-```json
 {
   "name": "789club-taixiu-predictor",
   "version": "1.0.0",
   "description": "Tool dự đoán kết quả Tài/Xỉu từ WebSocket 789Club",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node server.js"
   },
   "keywords": [
     "taixiu",
