@@ -318,87 +318,53 @@ function du_doan_tong_hop(totals_list, kq_list, dice_list, ma_phien) {
     }
     const chi_tiet = {};
 
-    // V1
+    // V1 - 8
     const [du1, ly1] = du_doan_v1(totals_list);
-    chi_tiet["v1"] = {
-        du_doan: du1,
-        ly_do: ly1
-    };
-
-    // V2
+    chi_tiet["v1"] = { du_doan: du1, ly_do: ly1 };
     const [du2, tin2, ly2] = du_doan_v2(totals_list);
-    chi_tiet["v2"] = {
-        du_doan: du2,
-        tin_cay: `${tin2}%`,
-        ly_do: ly2
-    };
-
-    // V3
+    chi_tiet["v2"] = { du_doan: du2, tin_cay: `${tin2}%`, ly_do: ly2 };
     const [du3, tin3, ly3] = du_doan_v3(totals_list);
-    chi_tiet["v3"] = {
-        du_doan: du3,
-        tin_cay: `${tin3}%`,
-        ly_do: ly3
-    };
-
-    // V4
+    chi_tiet["v3"] = { du_doan: du3, tin_cay: `${tin3}%`, ly_do: ly3 };
     const [du4, tin4] = du_doan_v4(kq_list, totals_list);
-    chi_tiet["v4"] = {
-        du_doan: du4,
-        tin_cay: `${tin4}%`
-    };
-
-    // V5
+    chi_tiet["v4"] = { du_doan: du4, tin_cay: `${tin4}%` };
     const tin5 = du_doan_phan_tram(ma_phien);
-    chi_tiet["v5"] = {
-        du_doan: tin5 >= 50 ? "Tài" : "Xỉu",
-        tin_cay: `${tin5}%`
-    };
-
-    // V6
+    chi_tiet["v5"] = { du_doan: tin5 >= 50 ? "Tài" : "Xỉu", tin_cay: `${tin5}%` };
     const du6 = du_doan_theo_xi_ngau(dice_list);
-    chi_tiet["v6"] = {
-        du_doan: du6
-    };
-
-    // V7
+    chi_tiet["v6"] = { du_doan: du6 };
     const [du7, prob7] = du_doan_theo_xi_ngau_prob(dice_list);
-    chi_tiet["v7"] = {
-        du_doan: du7,
-        tin_cay: `${(prob7*100).toFixed(2)}%`
-    };
-
-    // V8
+    chi_tiet["v7"] = { du_doan: du7, tin_cay: `${(prob7 * 100).toFixed(2)}%` };
     const phan_tich = phan_tich_cau_sunwin(totals_list);
-    chi_tiet["v8"] = {
-        du_doan: phan_tich.du_doan,
-        tin_cay: phan_tich.tin_cay,
-        ly_do: phan_tich.ly_do
-    };
+    chi_tiet["v8"] = { du_doan: phan_tich.du_doan, tin_cay: phan_tich.tin_cay, ly_do: phan_tich.ly_do };
 
-    // Tổng hợp kết quả
+    // Tổng hợp kết quả gốc
     const all_du_doan = Object.values(chi_tiet).map(v => v.du_doan).filter(d => d === "Tài" || d === "Xỉu");
     const tai_count = all_du_doan.filter(d => d === "Tài").length;
     const xiu_count = all_du_doan.filter(d => d === "Xỉu").length;
-    let ket_luan = "";
-    let final_prediction = "Chờ";
-
+    
+    let final_prediction_original = "Chờ";
     if (tai_count > xiu_count) {
-        ket_luan = `🎯 Nên đánh: TÀI (Dựa trên ${tai_count}/8 thuật toán đồng thuận)`;
-        final_prediction = "Tài";
+        final_prediction_original = "Tài";
     } else if (xiu_count > tai_count) {
-        ket_luan = `🎯 Nên đánh: XỈU (Dựa trên ${xiu_count}/8 thuật toán đồng thuận)`;
-        final_prediction = "Xỉu";
-    } else {
-        ket_luan = "⚖️ Tỉ lệ dự đoán cân bằng Tài/Xỉu - Cân nhắc kỹ";
-        final_prediction = "Chờ";
+        final_prediction_original = "Xỉu";
+    }
+
+    // ===== THỰC HIỆN ĐẢO NGƯỢC DỰ ĐOÁN (THEO YÊU CẦU) =====
+    let final_prediction_reversed = final_prediction_original;
+    let ket_luan_reversed = "⚖️ Tỉ lệ cân bằng, cân nhắc kỹ hoặc bỏ qua.";
+
+    if (final_prediction_original === "Tài") {
+        final_prediction_reversed = "Xỉu";
+        ket_luan_reversed = `🎯 Nên đánh: XỈU (Đảo ngược từ dự đoán gốc: TÀI, dựa trên ${tai_count}/8 thuật toán)`;
+    } else if (final_prediction_original === "Xỉu") {
+        final_prediction_reversed = "Tài";
+        ket_luan_reversed = `🎯 Nên đánh: TÀI (Đảo ngược từ dự đoán gốc: XỈU, dựa trên ${xiu_count}/8 thuật toán)`;
     }
 
     return {
-        prediction: final_prediction,
+        prediction: final_prediction_reversed, // Trả về kết quả đã đảo ngược
         tincay: `${((Math.max(tai_count, xiu_count) / 8) * 100).toFixed(1)}%`,
         chi_tiet: chi_tiet,
-        ket_luan: ket_luan,
+        ket_luan: ket_luan_reversed, // Trả về kết luận đã đảo ngược
         tai_count: tai_count,
         xiu_count: xiu_count
     };
@@ -529,7 +495,7 @@ function connectWebSocket() {
                     });
 
 
-                    console.log("🎲 Phiên mới:", sid, "| Kết quả:", `${tong} (${ketqua})`, "| Dự đoán:", result.prediction, `(${result.tincay})`);
+                    console.log("🎲 Phiên mới:", sid, "| Kết quả:", `${tong} (${ketqua})`, "| Dự đoán (đã đảo ngược):", result.prediction, `(${result.tincay})`);
                 }
             }
         } catch (err) {
