@@ -1,23 +1,29 @@
 {
-  "name": "789club-taixiu-predictor",
-  "version": "1.0.0",
-  "description": "Tool dự đoán kết quả Tài/Xỉu từ WebSocket 789Club",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "keywords": [
-    "taixiu",
-    "789club",
-    "websocket",
-    "predict",
-    "tool"
-  ],
-  "author": "@ghetvietcode - Rinkivana",
-  "license": "MIT",
-  "dependencies": {
-    "cors": "^2.8.5",
-    "express": "^4.18.2",
-    "ws": "^8.17.0"
-  }
+“name”: “taixiu-server”,
+“version”: “1.0.0”,
+“description”: “Server API cho game Tài Xỉu với WebSocket connection”,
+“main”: “server.js”,
+“scripts”: {
+“start”: “node server.js”,
+“dev”: “nodemon server.js”,
+“test”: “echo "Error: no test specified" && exit 1”
+},
+“keywords”: [
+“taixiu”,
+“websocket”,
+“api”,
+“game”,
+“nodejs”
+],
+“author”: “@ghetvietcode - Rinkivana”,
+“license”: “MIT”,
+“dependencies”: {
+“ws”: “^8.14.2”
+},
+“devDependencies”: {
+“nodemon”: “^3.0.2”
+},
+“engines”: {
+“node”: “>=14.0.0”
+}
 }
