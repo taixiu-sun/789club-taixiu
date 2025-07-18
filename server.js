@@ -4,11 +4,10 @@ const WebSocket = require('ws');
 // Port server HTTP
 const PORT = process.env.PORT || 10000;
 
-// Dữ liệu hiện tại
+// Dữ liệu hiện tại (đã bỏ trường "Dice")
 let currentData = {
     phien_truoc: null,
     ket_qua: "",
-    Dice: [],
     phien_hien_tai: null,
     du_doan: "",
     do_tin_cay: "N/A",
@@ -79,7 +78,6 @@ function predictNext(history) {
         acc[val] = (acc[val] || 0) + 1;
         return acc;
     }, {});
-    // Sửa lỗi: thêm `|| 0` để tránh lỗi khi một bên chưa xuất hiện
     return (count["Tài"] || 0) > (count["Xỉu"] || 0) ? "Xỉu" : "Tài";
 }
 
@@ -145,17 +143,15 @@ function connectWebSocket() {
 
                 if (data[1]?.cmd === 2006) {
                     const { sid, d1, d2, d3 } = data[1];
-                    const tong = d1 + d2 + d3;
-                    const ketqua = tong >= 11 ? "Tài" : "Xỉu";
-                    const diceArray = [d1, d2, d3];
+                    
+                    const ketqua = (d1 + d2 + d3) >= 11 ? "Tài" : "Xỉu";
                     
                     // Cập nhật lịch sử cho thuật toán mới
                     fullHistory.push(ketqua);
                     
-                    // Cập nhật dữ liệu để trả về API
+                    // ✨ THAY ĐỔI: Cập nhật dữ liệu mà không có trường "Dice"
                     currentData.phien_truoc = currentData.phien_hien_tai;
                     currentData.phien_hien_tai = sid;
-                    currentData.Dice = diceArray;
                     currentData.ket_qua = ketqua;
 
                     // Cập nhật chuỗi cầu để hiển thị
