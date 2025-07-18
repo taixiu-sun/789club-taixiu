@@ -17,9 +17,15 @@ let currentData = {
     Id: "@ghetvietcode - Rinkivana"
 };
 
-// Lịch sử pattern T/X (dùng để tạo mẫu cầu và dự đoán)
+// Lịch sử pattern T/X dạng chuỗi (dùng để hiển thị 'cầu')
 let patternHistory = "";
+// Lịch sử kết quả dạng mảng (dùng cho thuật toán dự đoán mới)
+let fullHistory = [];
 
+/**
+ * Cập nhật lịch sử và hiển thị cầu
+ * @param {string} result - 't' hoặc 'x'
+ */
 function updatePatternHistory(result) {
     if (patternHistory.length >= 20) {
         patternHistory = patternHistory.slice(1);
@@ -28,12 +34,55 @@ function updatePatternHistory(result) {
     currentData.cau = patternHistory;
 }
 
-function predictNextFromPattern(history) {
-    if (history.length < 6) return "Chưa đủ dữ liệu";
-    const lastChar = history[history.length - 1];
-    const predicted = lastChar === 't' ? 'x' : 't';
-    return predicted === 't' ? "Tài" : "Xỉu";
+/**
+ * THUẬT TOÁN DỰ ĐOÁN MỚI
+ * @param {string[]} history - Mảng lịch sử kết quả, ví dụ: ["Tài", "Xỉu", "Tài"]
+ * @returns {string} - "Tài" hoặc "Xỉu"
+ */
+function predictNext(history) {
+    // 1. Điều kiện khởi đầu
+    if (history.length < 4) return history.at(-1) || "Tài";
+
+    const last = history.at(-1);
+
+    // 2. Cầu bệt (4 kết quả cuối giống nhau)
+    if (history.slice(-4).every(k => k === last)) return last;
+
+    // 3. Cầu 2-2 (ví dụ: Xỉu, Xỉu, Tài, Tài)
+    if (
+        history.length >= 4 &&
+        history.at(-1) === history.at(-2) &&
+        history.at(-3) === history.at(-4) &&
+        history.at(-1) !== history.at(-3)
+    ) {
+        return last === "Tài" ? "Xỉu" : "Tài";
+    }
+
+    // 4. Cầu 1-2-1 (ví dụ: Tài, Xỉu, Xỉu, Tài)
+    const last4 = history.slice(-4);
+    if (last4[0] !== last4[1] && last4[1] === last4[2] && last4[2] !== last4[3]) {
+        return last === "Tài" ? "Xỉu" : "Tài";
+    }
+
+    // 5. Cầu lặp 3-3 (ví dụ: T-X-T-T-X-T)
+    const pattern = history.slice(-6, -3).toString();
+    const latest = history.slice(-3).toString();
+    if (pattern === latest) return history.at(-1);
+
+    // 6. Quy tắc lỗi (sẽ không bao giờ chạy với chỉ 2 kết quả T/X)
+    if (new Set(history.slice(-3)).size === 3) {
+        return Math.random() < 0.5 ? "Tài" : "Xỉu";
+    }
+
+    // 7. Mặc định: Chống lại kết quả đa số
+    const count = history.reduce((acc, val) => {
+        acc[val] = (acc[val] || 0) + 1;
+        return acc;
+    }, {});
+    // Sửa lỗi: thêm `|| 0` để tránh lỗi khi một bên chưa xuất hiện
+    return (count["Tài"] || 0) > (count["Xỉu"] || 0) ? "Xỉu" : "Tài";
 }
+
 
 // Thông tin WebSocket
 const WS_URL = "wss://websocket.atpman.net/websocket";
@@ -99,16 +148,22 @@ function connectWebSocket() {
                     const tong = d1 + d2 + d3;
                     const ketqua = tong >= 11 ? "Tài" : "Xỉu";
                     const diceArray = [d1, d2, d3];
-
+                    
+                    // Cập nhật lịch sử cho thuật toán mới
+                    fullHistory.push(ketqua);
+                    
+                    // Cập nhật dữ liệu để trả về API
                     currentData.phien_truoc = currentData.phien_hien_tai;
                     currentData.phien_hien_tai = sid;
                     currentData.Dice = diceArray;
                     currentData.ket_qua = ketqua;
 
+                    // Cập nhật chuỗi cầu để hiển thị
                     const resultTX = ketqua === "Tài" ? 't' : 'x';
                     updatePatternHistory(resultTX);
 
-                    const duDoan = predictNextFromPattern(patternHistory);
+                    // Lấy dự đoán từ thuật toán mới
+                    const duDoan = predictNext(fullHistory);
                     currentData.du_doan = duDoan;
                     currentData.ngay = new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
 
