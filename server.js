@@ -5,329 +5,554 @@ const crypto = require('crypto');
 // Port server HTTP
 const PORT = process.env.PORT || 10000;
 
-// Dữ liệu hiện tại để trả về API
-let currentData = {
-    phien_truoc: null,
-    ket_qua: "",
-    phien_hien_tai: null,
-    du_doan: "Chờ",
-    do_tin_cay: "0%",
-    cau: "",
-    ngay: "",
-    Id: "@ghetvietcode - Rinkivana",
-    chi_tiet_du_doan: {},
-    trang_thai: "Đang kết nối..."
-};
+// ===== BỘ THUẬT TOÁN DỰ ĐOÁN (CHUYỂN TỪ PYTHON) =====
 
-// Lịch sử dữ liệu cho các thuật toán
-let patternHistory = "";
-let totalsHistory = [];
-let kqHistory = [];
-let diceHistory = [];
-
-// Biến quản lý kết nối
-let ws = null;
-let reconnectAttempts = 0;
-let maxReconnectAttempts = 10;
-let isConnected = false;
-let heartbeatInterval = null;
-let reconnectTimeout = null;
-
-// Hàm phụ trợ: Chuyển tổng điểm sang Tài/Xỉu
-function getTaiXiu(total) {
+// --- Helper Functions ---
+function get_tai_xiu(total) {
     return (total >= 11 && total <= 18) ? "Tài" : "Xỉu";
 }
 
-// ===== CÁC THUẬT TOÁN DỰ ĐOÁN =====
+function Counter(arr) {
+    return arr.reduce((acc, val) => {
+        acc[val] = (acc[val] || 0) + 1;
+        return acc;
+    }, {});
+}
+
+// --- THUẬT TOÁN 1: Phân tích cầu đặc biệt ---
 function du_doan_v1(totals_list) {
     if (totals_list.length < 4) {
         return ["Chờ", "Đợi thêm dữ liệu để phân tích cầu."];
     }
-    const last_4_tx = totals_list.slice(-4).map(getTaiXiu);
-    const last_3_tx = totals_list.slice(-3).map(getTaiXiu);
-    const last_result = last_3_tx.at(-1);
+
+    const last_4 = totals_list.slice(-4);
+    const last_3 = totals_list.slice(-3);
+    const last_total = totals_list[totals_list.length - 1];
+    const last_result = get_tai_xiu(last_total);
 
     // Cầu đặc biệt A-B-A-A
-    if (last_4_tx[0] === last_4_tx[2] && last_4_tx[0] === last_4_tx[3] && last_4_tx[0] !== last_4_tx[1]) {
-        return [last_4_tx[0], `Cầu đặc biệt ${last_4_tx.join('-')}. Bắt theo cầu.`];
+    if (last_4[0] === last_4[2] && last_4[0] === last_4[3] && last_4[0] !== last_4[1]) {
+        return ["Tài", `Cầu đặc biệt ${last_4.join('-')}. Bắt Tài theo công thức.`];
     }
     // Cầu sandwich A-B-A
-    if (last_3_tx[0] === last_3_tx[2] && last_3_tx[0] !== last_3_tx[1]) {
-        return [last_3_tx[1], `Cầu sandwich ${last_3_tx.join('-')}. Theo cầu!`];
+    if (last_3[0] === last_3[2] && last_3[0] !== last_3[1]) {
+        return [last_result === "Tài" ? "Xỉu" : "Tài", `Cầu sandwich ${last_3.join('-')}. Bẻ cầu!`];
     }
-    // Mặc định bẻ cầu 1-1
-    return [last_result === "Tài" ? "Xỉu" : "Tài", "Không có cầu đặc biệt, dự đoán bẻ cầu 1-1."];
+    // Số đặc biệt
+    const special_nums = new Set([7, 9, 10]);
+    const count = last_3.filter(total => special_nums.has(total)).length;
+    if (count >= 2) {
+        return [last_result === "Tài" ? "Xỉu" : "Tài", `Xuất hiện cặp số đặc biệt trong 3 phiên gần nhất. Bẻ cầu!`];
+    }
+    // Cầu nghiêng
+    const last_6 = totals_list.slice(-6);
+    const freq_count = last_6.filter(t => t === last_total).length;
+    if (freq_count >= 3) {
+        return [get_tai_xiu(last_total), `Số ${last_total} lặp lại ${freq_count} lần. Bắt theo cầu nghiêng.`];
+    }
+    // Cầu lặp lại
+    if (last_3[0] === last_3[2] || last_3[1] === last_3[2]) {
+        return [last_result === "Tài" ? "Xỉu" : "Tài", `Cầu lặp lại ${last_3[1]}-${last_3[2]} hoặc ${last_3[0]}-${last_3[2]}. Bẻ cầu 1-1.`];
+    }
+    // Mặc định
+    return [last_result === "Tài" ? "Xỉu" : "Tài", "Không có cầu đặc biệt, dự đoán theo cầu 1-1."];
 }
 
+// --- THUẬT TOÁN 2: Phân tích với độ tin cậy ---
 function du_doan_v2(totals_list) {
     if (totals_list.length < 4) {
         return ["Chờ", 0, "Chưa đủ dữ liệu để dự đoán."];
     }
-    const last_3_tx = totals_list.slice(-3).map(getTaiXiu);
-    const last_result = last_3_tx.at(-1);
 
-    // Cầu sandwich A-B-A
-    if (last_3_tx[0] === last_3_tx[2] && last_3_tx[0] !== last_3_tx[1]) {
-        return [last_result === "Tài" ? "Xỉu" : "Tài", 83, `Cầu sandwich ${last_3_tx.join('-')}. Bẻ cầu!`];
+    const last_result = get_tai_xiu(totals_list[totals_list.length - 1]);
+
+    // Rule definitions
+    const rules = [{
+        id: "special_pattern",
+        exec: (totals) => {
+            const last_4 = totals.slice(-4);
+            if (last_4[0] === last_4[2] && last_4[0] === last_4[3] && last_4[0] !== last_4[1]) {
+                return ["Tài", 85, `Cầu đặc biệt ${last_4.join('-')}. Bắt Tài.`];
+            }
+        }
+    }, {
+        id: "sandwich",
+        exec: (totals) => {
+            const last_3 = totals.slice(-3);
+            if (last_3[0] === last_3[2] && last_3[0] !== last_3[1]) {
+                return [last_result === "Tài" ? "Xỉu" : "Tài", 83, `Cầu sandwich ${last_3.join('-')}. Bẻ cầu!`];
+            }
+        }
+    }, {
+        id: "special_numbers",
+        exec: (totals) => {
+            const last_3 = totals.slice(-3);
+            const special_nums = new Set([7, 9, 10]);
+            const count = last_3.filter(t => special_nums.has(t)).length;
+            if (count >= 2) {
+                return [last_result === "Tài" ? "Xỉu" : "Tài", 81, `Xuất hiện ≥2 số đặc biệt. Bẻ cầu!`];
+            }
+        }
+    }, {
+        id: "frequent_repeat",
+        exec: (totals) => {
+            const last_total = totals[totals.length - 1];
+            const last_6 = totals.slice(-6);
+            const freq = last_6.filter(t => t === last_total).length;
+            if (freq >= 3) {
+                return [get_tai_xiu(last_total), 80, `Số ${last_total} lặp lại ${freq} lần. Bắt theo nghiêng cầu!`];
+            }
+        }
+    }, {
+        id: "repeat_pattern",
+        exec: (totals) => {
+            const last_3 = totals.slice(-3);
+            if (last_3[0] === last_3[2] || last_3[1] === last_3[2]) {
+                return [last_result === "Tài" ? "Xỉu" : "Tài", 77, `Cầu lặp dạng ${last_3.join('-')}. Bẻ cầu.`];
+            }
+        }
+    }, ];
+
+    for (const rule of rules) {
+        const result = rule.exec(totals_list);
+        if (result) return result;
     }
-    // Cầu lặp lại
-    if (last_3_tx[0] === last_3_tx[2] || last_3_tx[1] === last_3_tx[2]) {
-        return [last_result === "Tài" ? "Xỉu" : "Tài", 77, `Cầu lặp dạng ${last_3_tx.join('-')}. Bẻ cầu.`];
-    }
-    return [last_result === "Tài" ? "Xỉu" : "Tài", 71, "Không có cầu đặc biệt nào, bẻ cầu mặc định."];
+
+    return [last_result === "Tài" ? "Xỉu" : "Tài", 71, "Không có cầu đặc biệt, bẻ cầu mặc định."];
 }
 
+
+// --- THUẬT TOÁN 3: Phân tích chuỗi và extreme ---
+function du_doan_v3(totals_list) {
+    if (totals_list.length < 4) {
+        return ["Chờ", 0, "Không đủ dữ liệu"];
+    }
+    const last_total = totals_list[totals_list.length - 1];
+    const last_result = get_tai_xiu(last_total);
+    const types_list = totals_list.map(t => get_tai_xiu(t));
+
+    // Rule: chain of same results
+    let chain = 1;
+    for (let i = types_list.length - 1; i > 0; i--) {
+        if (types_list[i] === types_list[i - 1]) {
+            chain++;
+        } else {
+            break;
+        }
+    }
+    if (chain >= 4) {
+        const pred = types_list[types_list.length - 1] === "Tài" ? "Xỉu" : "Tài";
+        return [pred, 78, `Có chuỗi ${chain} phiên ${types_list[types_list.length - 1]}. Đảo chuỗi!`];
+    }
+
+    // Rule: extreme total
+    if (last_total <= 5 || last_total >= 16) {
+        const pred = last_result === "Tài" ? "Xỉu" : "Tài";
+        return [pred, 76, `Tổng điểm cực trị ${last_total}. Đảo chiều.`];
+    }
+
+    return [last_result === "Tài" ? "Xỉu" : "Tài", 70, "Không có quy tắc nổi bật."];
+}
+
+// --- THUẬT TOÁN 4: Phân tích đơn giản ---
 function du_doan_v4(kq_list, tong_list) {
-    if (kq_list.length < 3) return ["Chờ", 50];
-    const tin_cay = 50;
-    if (kq_list.slice(-3).join(',') === 'Tài,Tài,Tài') return ["Xỉu", Math.min(tin_cay + 20, 95)];
-    if (kq_list.slice(-3).join(',') === 'Xỉu,Xỉu,Xỉu') return ["Tài", Math.min(tin_cay + 20, 95)];
-    if (kq_list.slice(-2).join(',') === 'Tài,Xỉu') return ["Tài", Math.min(tin_cay + 10, 95)];
-    if (tong_list.at(-1) >= 15) return ["Xỉu", Math.min(tin_cay + 10, 95)];
-    if (tong_list.at(-1) <= 9) return ["Tài", Math.min(tin_cay + 10, 95)];
-    return [kq_list.at(-1) === "Tài" ? "Xỉu" : "Tài", tin_cay];
+    let tin_cay = 50;
+    if (kq_list.length < 3) return [kq_list.length > 0 ? kq_list.slice(-1)[0] : "Chờ", tin_cay];
+
+    const last_3_kq = kq_list.slice(-3).join('');
+    const last_2_kq = kq_list.slice(-2).join('');
+    const last_tong = tong_list.slice(-1)[0];
+
+    if (last_3_kq === "TàiTàiTài") return ["Xỉu", Math.min(tin_cay + 20, 95)];
+    if (last_3_kq === "XỉuXỉuXỉu") return ["Tài", Math.min(tin_cay + 20, 95)];
+    if (last_2_kq === "TàiXỉu") return ["Tài", Math.min(tin_cay + 10, 95)];
+    if (last_tong >= 15) return ["Xỉu", Math.min(tin_cay + 10, 95)];
+    if (last_tong <= 9) return ["Tài", Math.min(tin_cay + 10, 95)];
+
+    return [kq_list.slice(-1)[0], tin_cay];
+}
+
+
+// --- THUẬT TOÁN 5: Dự đoán theo hash ---
+function algo1(input_str) {
+    const hash = crypto.createHash('sha256').update(input_str).digest('hex');
+    return parseInt(hash, 16) % 100;
+}
+
+function algo2(input_str) {
+    let sum = 0;
+    for (let i = 0; i < input_str.length; i++) {
+        sum += input_str.charCodeAt(i);
+    }
+    return sum % 100;
+}
+
+function algo3(input_str) {
+    const hash = crypto.createHash('sha1').update(input_str).digest('hex');
+    return parseInt(hash.slice(-2), 16) % 100;
 }
 
 function du_doan_phan_tram(input_str) {
-    const algo1 = parseInt(crypto.createHash('sha256').update(input_str).digest('hex'), 16) % 100;
-    const algo2 = input_str.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0) % 100;
-    const algo3 = parseInt(crypto.createHash('sha1').update(input_str).digest('hex').slice(-2), 16) % 100;
-    return parseFloat(((algo1 + algo2 + algo3) / 3).toFixed(2));
+    const percentage = (algo1(input_str) + algo2(input_str) + algo3(input_str)) / 3;
+    return parseFloat(percentage.toFixed(2));
 }
 
+// --- THUẬT TOÁN 6: Dự đoán theo xúc xắc ---
 function du_doan_theo_xi_ngau(dice_list) {
-    if (!dice_list.length) return "Đợi dữ liệu";
-    const [d1, d2, d3] = dice_list.at(-1);
+    if (!dice_list || dice_list.length === 0) return "Đợi thêm dữ liệu";
+    const [d1, d2, d3] = dice_list[dice_list.length - 1];
     const total = d1 + d2 + d3;
+
     const result_list = [d1, d2, d3].map(d => {
         let tmp = d + total;
         if (tmp === 4 || tmp === 5) tmp -= 4;
         else if (tmp >= 6) tmp -= 6;
         return tmp % 2 === 0 ? "Tài" : "Xỉu";
     });
-    const tai_count = result_list.filter(r => r === "Tài").length;
-    return tai_count >= 2 ? "Tài" : "Xỉu";
+
+    const counts = Counter(result_list);
+    return (counts['Tài'] || 0) >= (counts['Xỉu'] || 0) ? "Tài" : "Xỉu";
 }
 
-function du_doan_tong_hop(totals_list, kq_list, dice_list, ma_phien) {
-    if (totals_list.length < 1) {
-        return { prediction: "Chờ", tincay: "0%", chi_tiet: {}, ket_luan: "Chưa có dữ liệu." };
+// --- THUẬT TOÁN 7: Dự đoán theo xúc xắc với xác suất ---
+function du_doan_theo_xi_ngau_prob(dice_list) {
+    if (!dice_list || dice_list.length === 0) return ["Đợi thêm dữ liệu", 0.5];
+    const [d1, d2, d3] = dice_list[dice_list.length - 1];
+    const total = d1 + d2 + d3;
+
+    const result_list = [d1, d2, d3].map(d => {
+        let tmp = d + total;
+        if (tmp === 4 || tmp === 5) tmp -= 4;
+        else if (tmp >= 6) tmp -= 6;
+        return tmp % 2 === 0 ? "Tài" : "Xỉu";
+    });
+
+    const count_tai = result_list.filter(r => r === "Tài").length;
+    const prob_tai = count_tai / 3;
+    const prediction = count_tai >= 2 ? "Tài" : "Xỉu";
+    return [prediction, prob_tai];
+}
+
+// --- THUẬT TOÁN 8: Phân tích cầu Sunwin ---
+function phan_tich_cau_sunwin(ds_tong) {
+    const now = new Date();
+    const hour = now.getHours(); // Lấy giờ của server
+    if (hour >= 0 && hour < 5) {
+        return {
+            du_doan: "Chờ",
+            tin_cay: "0%",
+            ly_do: "❌ Không nên áp dụng công thức từ 00:00 đến 05:00 sáng"
+        };
     }
 
+    let ket_luan = "";
+    let do_tin_cay = 0;
+
+    // Phân tích cặp giống nhau
+    if (ds_tong.length >= 3 && ds_tong.slice(-1)[0] === ds_tong.slice(-3)[0]) {
+        ket_luan += `🔁 Cặp giống nhau: ${ds_tong.slice(-1)[0]} - có thể bẻ\n`;
+        do_tin_cay += 20;
+    }
+
+    // Phân tích 3 cầu liên tục
+    if (ds_tong.length >= 3) {
+        const [a, b, c] = ds_tong.slice(-3);
+        if (a > 10 && b > 10 && c > 10) {
+            ket_luan += `⚪ 3 cầu Tài liên tục -> Xỉu nhẹ\n`;
+            do_tin_cay += 15;
+        }
+        if (a <= 10 && b <= 10 && c <= 10) {
+            ket_luan += `⚫ 3 cầu Xỉu liên tục -> Tài nhẹ\n`;
+            do_tin_cay += 15;
+        }
+    }
+
+    // Phân tích cầu bệt
+    if (ds_tong.length >= 6) {
+        const recent = ds_tong.slice(-6);
+        const biet_den = recent.slice(0, 5).every(x => x <= 10);
+        const biet_trang = recent.slice(0, 5).every(x => x > 10);
+        if (biet_den && recent[5] > 10) {
+            ket_luan += "📉 Cầu bệt Xỉu bị lệch - bẻ Tài nhẹ\n";
+            do_tin_cay += 10;
+        }
+        if (biet_trang && recent[5] <= 10) {
+            ket_luan += "📈 Cầu bệt Tài bị lệch - bẻ Xỉu nhẹ\n";
+            do_tin_cay += 10;
+        }
+    }
+
+    // Phân tích tần suất
+    const tong_counter = Counter(ds_tong.slice(-10));
+    for (const [k, v] of Object.entries(tong_counter)) {
+        if (v >= 3 && parseInt(k) <= 10) {
+            ket_luan += `📌 Tổng ${k} xuất hiện ${v} lần gần đây → Bẻ Xỉu\n`;
+            do_tin_cay += 10;
+        }
+    }
+
+    let du_doan = "❓ Chưa đủ dữ kiện để dự đoán";
+    if (do_tin_cay >= 40) {
+        du_doan = ds_tong.slice(-1)[0] > 10 ? "Xỉu" : "Tài";
+    }
+
+    return {
+        du_doan: du_doan,
+        tin_cay: `${Math.min(do_tin_cay, 100)}%`,
+        ly_do: ket_luan.trim()
+    };
+}
+
+
+// --- HÀM TỔNG HỢP DỰ ĐOÁN ---
+function du_doan_tong_hop(totals_list, kq_list, dice_list, ma_phien) {
+    if (totals_list.length === 0) {
+        return {
+            prediction: "Chờ",
+            tincay: "0%",
+            chi_tiet: {},
+            ket_luan: "Chờ dữ liệu phiên đầu tiên...",
+            tai_count: 0,
+            xiu_count: 0
+        };
+    }
     const chi_tiet = {};
+
+    // V1
     const [du1, ly1] = du_doan_v1(totals_list);
-    chi_tiet["v1"] = { du_doan: du1, ly_do: ly1 };
+    chi_tiet["v1"] = {
+        du_doan: du1,
+        ly_do: ly1
+    };
 
+    // V2
     const [du2, tin2, ly2] = du_doan_v2(totals_list);
-    chi_tiet["v2"] = { du_doan: du2, tin_cay: `${tin2}%`, ly_do: ly2 };
+    chi_tiet["v2"] = {
+        du_doan: du2,
+        tin_cay: `${tin2}%`,
+        ly_do: ly2
+    };
 
+    // V3
+    const [du3, tin3, ly3] = du_doan_v3(totals_list);
+    chi_tiet["v3"] = {
+        du_doan: du3,
+        tin_cay: `${tin3}%`,
+        ly_do: ly3
+    };
+
+    // V4
     const [du4, tin4] = du_doan_v4(kq_list, totals_list);
-    chi_tiet["v4"] = { du_doan: du4, tin_cay: `${tin4}%` };
+    chi_tiet["v4"] = {
+        du_doan: du4,
+        tin_cay: `${tin4}%`
+    };
 
+    // V5
     const tin5 = du_doan_phan_tram(ma_phien);
-    chi_tiet["v5"] = { du_doan: tin5 >= 50 ? "Tài" : "Xỉu", tin_cay: `${tin5}%` };
+    chi_tiet["v5"] = {
+        du_doan: tin5 >= 50 ? "Tài" : "Xỉu",
+        tin_cay: `${tin5}%`
+    };
 
+    // V6
     const du6 = du_doan_theo_xi_ngau(dice_list);
-    chi_tiet["v6"] = { du_doan: du6 };
+    chi_tiet["v6"] = {
+        du_doan: du6
+    };
 
+    // V7
+    const [du7, prob7] = du_doan_theo_xi_ngau_prob(dice_list);
+    chi_tiet["v7"] = {
+        du_doan: du7,
+        tin_cay: `${(prob7*100).toFixed(2)}%`
+    };
+
+    // V8
+    const phan_tich = phan_tich_cau_sunwin(totals_list);
+    chi_tiet["v8"] = {
+        du_doan: phan_tich.du_doan,
+        tin_cay: phan_tich.tin_cay,
+        ly_do: phan_tich.ly_do
+    };
+
+    // Tổng hợp kết quả
     const all_du_doan = Object.values(chi_tiet).map(v => v.du_doan).filter(d => d === "Tài" || d === "Xỉu");
     const tai_count = all_du_doan.filter(d => d === "Tài").length;
     const xiu_count = all_du_doan.filter(d => d === "Xỉu").length;
-    const total_algos = all_du_doan.length;
-
     let ket_luan = "";
     let final_prediction = "Chờ";
-    let tincay = "0%";
 
-    if (total_algos > 0) {
-        if (tai_count > xiu_count) {
-            final_prediction = "Tài";
-            ket_luan = `🎯 Nên đánh: TÀI (${tai_count}/${total_algos} thuật toán)`;
-            tincay = `${(tai_count / total_algos * 100).toFixed(1)}%`;
-        } else if (xiu_count > tai_count) {
-            final_prediction = "Xỉu";
-            ket_luan = `🎯 Nên đánh: XỈU (${xiu_count}/${total_algos} thuật toán)`;
-            tincay = `${(xiu_count / total_algos * 100).toFixed(1)}%`;
-        } else {
-            ket_luan = "⚖️ Tỉ lệ cân bằng, cân nhắc kỹ!";
-            final_prediction = kq_list.at(-1) === "Tài" ? "Xỉu" : "Tài";
-            tincay = "50.0%";
-        }
+    if (tai_count > xiu_count) {
+        ket_luan = `🎯 Nên đánh: TÀI (Dựa trên ${tai_count}/8 thuật toán đồng thuận)`;
+        final_prediction = "Tài";
+    } else if (xiu_count > tai_count) {
+        ket_luan = `🎯 Nên đánh: XỈU (Dựa trên ${xiu_count}/8 thuật toán đồng thuận)`;
+        final_prediction = "Xỉu";
+    } else {
+        ket_luan = "⚖️ Tỉ lệ dự đoán cân bằng Tài/Xỉu - Cân nhắc kỹ";
+        final_prediction = "Chờ";
     }
 
     return {
         prediction: final_prediction,
-        tincay: tincay,
+        tincay: `${((Math.max(tai_count, xiu_count) / 8) * 100).toFixed(1)}%`,
         chi_tiet: chi_tiet,
         ket_luan: ket_luan,
+        tai_count: tai_count,
+        xiu_count: xiu_count
     };
 }
 
-function updatePatternHistory(result) {
-    if (patternHistory.length >= 20) {
-        patternHistory = patternHistory.slice(1);
+
+// ===== LOGIC SERVER =====
+
+// Dữ liệu và lịch sử
+let totals_list = [];
+let kq_list = [];
+let dice_list = [];
+const MAX_HISTORY = 50; // Giới hạn lưu trữ 50 phiên gần nhất
+
+let currentData = {
+    phien_truoc: null,
+    ket_qua: "",
+    Dice: [],
+    phien_hien_tai: null,
+    du_doan: "",
+    do_tin_cay: "N/A",
+    ket_luan_tong_hop: "",
+    chi_tiet_du_doan: {},
+    ngay: "",
+    Id: "@ghetvietcode - Rinkivana"
+};
+
+// Thông tin WebSocket
+const WS_URL = "wss://websocket.atpman.net/websocket";
+const HEADERS = {
+    "Host": "websocket.atpman.net",
+    "Origin": "https://play.789club.sx",
+    "User-Agent": "Mozilla/5.0",
+    "Accept-Encoding": "gzip, deflate, br, zstd",
+    "Accept-Language": "vi-VN,vi;q=0.9",
+    "Pragma": "no-cache",
+    "Cache-Control": "no-cache"
+};
+let lastEventId = 19;
+const LOGIN_MESSAGE = [
+    1, "MiniGame", "thatoidimoo11233", "112233", {
+        info: JSON.stringify({
+            ipAddress: "2405:4802:18c2:5990:3f0:c150:861d:5427",
+            userId: "6ba5b041-a68d-4468-95d3-0bb2d8674512",
+            username: "S8_thatoidimoo11233",
+            timestamp: 1752497763866,
+            refreshToken: "c6c49a4ff8ca49ac87fcaf2543a96221.6f17553681b74176a4ebeb77f475f443"
+        }),
+        signature: "5F953D843B438DD810A98D903AD3623CE98AED1745C3925EEAFD2A5BEB4D86A24ED0B97129E6AAB5DA1C3F73C2A236AE06D08EDDD937991260DFEA543E8F1C8818A651BDF4204E97A53F0461B306A95A6D7D56F435326270E9E4CB8084BB93969BFD4DB3CA8E519D079324E47110BCC23AB2139508D9E762407B76DE542D6E68"
     }
-    patternHistory += result;
-    currentData.cau = patternHistory;
-}
+];
+const SUBSCRIBE_TX_RESULT = [6, "MiniGame", "taixiuUnbalancedPlugin", {
+    cmd: 2000
+}];
+const SUBSCRIBE_LOBBY = [6, "MiniGame", "lobbyPlugin", {
+    cmd: 10001
+}];
 
-// ===== CẢI THIỆN KẾT NỐI WEBSOCKET =====
-function clearIntervals() {
-    if (heartbeatInterval) clearInterval(heartbeatInterval);
-    if (reconnectTimeout) clearTimeout(reconnectTimeout);
-    heartbeatInterval = null;
-    reconnectTimeout = null;
-}
-
-function startHeartbeat() {
-    clearIntervals();
-    heartbeatInterval = setInterval(() => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send("2"); // Ping message
-            console.log("💓 Heartbeat sent");
-        }
-    }, 30000);
-}
-
+// Kết nối và xử lý WebSocket
 function connectWebSocket() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        console.log("🔄 WebSocket đã kết nối, bỏ qua kết nối mới");
-        return;
-    }
-
-    clearIntervals();
-
-    const WS_URL = "wss://websocket.atpman.net/websocket";
-    const HEADERS = {
-        "Host": "websocket.atpman.net",
-        "Origin": "[https://play.789club.sx](https://play.789club.sx)",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    };
-
-    console.log(`🔄 Đang kết nối WebSocket... (Lần thử: ${reconnectAttempts + 1})`);
-    currentData.trang_thai = `Đang kết nối (${reconnectAttempts + 1}/${maxReconnectAttempts})`;
-
-    ws = new WebSocket(WS_URL, {
-        headers: HEADERS,
-        handshakeTimeout: 10000,
+    const ws = new WebSocket(WS_URL, {
+        headers: HEADERS
     });
 
-    const connectionTimeout = setTimeout(() => {
-        if (ws && ws.readyState === WebSocket.CONNECTING) {
-            console.log("⏱️ Timeout kết nối WebSocket");
-            ws.terminate();
-        }
-    }, 15000);
-
     ws.on('open', () => {
-        clearTimeout(connectionTimeout);
-        console.log("✅ Đã kết nối WebSocket thành công!");
-        isConnected = true;
-        reconnectAttempts = 0;
-        currentData.trang_thai = "Đã kết nối";
-
-        const LOGIN_MESSAGE = [1, "MiniGame", "thatoidimoo11233", "112233", { info: '{"ipAddress":"2405:4802:18c2:5990:3f0:c150:861d:5427","userId":"6ba5b041-a68d-4468-95d3-0bb2d8674512","username":"S8_thatoidimoo11233","timestamp":1752497763866,"refreshToken":"c6c49a4ff8ca49ac87fcaf2543a96221.6f17553681b74176a4ebeb77f475f443"}', signature: "5F953D843B438DD810A98D903AD3623CE98AED1745C3925EEAFD2A5BEB4D86A24ED0B97129E6AAB5DA1C3F73C2A236AE06D08EDDD937991260DFEA543E8F1C8818A651BDF4204E97A53F0461B306A95A6D7D56F435326270E9E4CB8084BB93969BFD4DB3CA8E519D079324E47110BCC23AB2139508D9E762407B76DE542D6E68" }];
-        const SUBSCRIBE_TX_RESULT = [6, "MiniGame", "taixiuUnbalancedPlugin", { cmd: 2000 }];
-        const SUBSCRIBE_LOBBY = [6, "MiniGame", "lobbyPlugin", { cmd: 10001 }];
-
+        console.log("✅ Đã kết nối WebSocket");
         ws.send(JSON.stringify(LOGIN_MESSAGE));
-        setTimeout(() => {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify(SUBSCRIBE_TX_RESULT));
-                ws.send(JSON.stringify(SUBSCRIBE_LOBBY));
-                console.log("📡 Đã gửi các message đăng ký");
-            }
-        }, 2000);
 
-        startHeartbeat();
+        setTimeout(() => {
+            ws.send(JSON.stringify(SUBSCRIBE_TX_RESULT));
+            ws.send(JSON.stringify(SUBSCRIBE_LOBBY));
+        }, 1000);
+
+        setInterval(() => ws.send("2"), 10000);
+        setInterval(() => ws.send(JSON.stringify(SUBSCRIBE_TX_RESULT)), 30000);
+        setInterval(() => ws.send(JSON.stringify([7, "Simms", lastEventId, 0, {
+            id: 0
+        }])), 15000);
     });
 
     ws.on('message', (msg) => {
         try {
             const data = JSON.parse(msg);
-            if (Array.isArray(data) && data[1]?.cmd === 2006) {
-                const { sid, d1, d2, d3 } = data[1];
-                const total = d1 + d2 + d3;
-                const ketqua = getTaiXiu(total);
 
-                totalsHistory.push(total);
-                kqHistory.push(ketqua);
-                diceHistory.push([d1, d2, d3]);
-
-                if (totalsHistory.length > 50) {
-                    totalsHistory.shift();
-                    kqHistory.shift();
-                    diceHistory.shift();
+            if (Array.isArray(data)) {
+                if (data[0] === 7 && data[1] === "Simms" && Number.isInteger(data[2])) {
+                    lastEventId = data[2];
                 }
 
-                const ma_phien = `PH_${sid}`;
-                const predictionResult = du_doan_tong_hop(totalsHistory, kqHistory, diceHistory, ma_phien);
+                if (data[1] ?.cmd === 2006) {
+                    const {
+                        sid,
+                        d1,
+                        d2,
+                        d3
+                    } = data[1];
+                    const tong = d1 + d2 + d3;
+                    const ketqua = tong >= 11 ? "Tài" : "Xỉu";
+                    const diceArray = [d1, d2, d3];
+                    const ma_phien_str = String(sid);
 
-                currentData.phien_truoc = currentData.phien_hien_tai;
-                currentData.phien_hien_tai = sid;
-                currentData.ket_qua = `${ketqua} (${total})`;
-                currentData.du_doan = predictionResult.prediction;
-                currentData.do_tin_cay = predictionResult.tincay;
-                currentData.chi_tiet_du_doan = predictionResult.ket_luan;
-                currentData.ngay = new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
-                currentData.trang_thai = "Đang hoạt động";
+                    // Cập nhật lịch sử
+                    totals_list.push(tong);
+                    kq_list.push(ketqua);
+                    dice_list.push(diceArray);
 
-                updatePatternHistory(ketqua === "Tài" ? 'T' : 'X');
+                    // Giữ lịch sử ở kích thước tối đa
+                    if (totals_list.length > MAX_HISTORY) {
+                        totals_list.shift();
+                        kq_list.shift();
+                        dice_list.shift();
+                    }
 
-                console.log(`\n🎲 PHIÊN ${sid}: ${ketqua} (${d1}-${d2}-${d3} = ${total})`);
-                console.log(`🎯 DỰ ĐOÁN: ${predictionResult.prediction} (${predictionResult.tincay})`);
-                console.log(`📜 KẾT LUẬN: ${predictionResult.ket_luan}`);
-                console.log(`📊 Cầu hiện tại: ${patternHistory}`);
+                    // Gọi bộ thuật toán dự đoán tổng hợp
+                    const result = du_doan_tong_hop(totals_list, kq_list, dice_list, ma_phien_str);
+
+                    // Cập nhật dữ liệu hiện tại để trả về qua API
+                    currentData.phien_truoc = currentData.phien_hien_tai;
+                    currentData.phien_hien_tai = sid;
+                    currentData.Dice = diceArray;
+                    currentData.ket_qua = ketqua;
+                    currentData.du_doan = result.prediction;
+                    currentData.do_tin_cay = result.tincay;
+                    currentData.ket_luan_tong_hop = result.ket_luan;
+                    currentData.chi_tiet_du_doan = result.chi_tiet; // Dữ liệu chi tiết
+                    currentData.ngay = new Date().toLocaleString("vi-VN", {
+                        timeZone: "Asia/Ho_Chi_Minh"
+                    });
+
+
+                    console.log("🎲 Phiên mới:", sid, "| Kết quả:", `${tong} (${ketqua})`, "| Dự đoán:", result.prediction, `(${result.tincay})`);
+                }
             }
-
-            if (msg.toString() === "3") {
-                console.log("💚 Nhận pong từ server");
-            }
-
         } catch (err) {
-            if (msg.toString().length < 50) {
-                console.log(`📨 Raw message: ${msg.toString()}`);
+            // Bỏ qua lỗi parse JSON không hợp lệ
+            if (!(err instanceof SyntaxError)) {
+                console.error("❌ Lỗi message:", err.message);
             }
         }
     });
 
-    ws.on('close', (code, reason) => {
-        clearTimeout(connectionTimeout);
-        clearIntervals();
-        isConnected = false;
-
-        console.log(`🔌 WebSocket đã đóng. Code: ${code}, Reason: ${reason}`);
-        currentData.trang_thai = `Mất kết nối (${code})`;
-
-        if (reconnectAttempts < maxReconnectAttempts) {
-            reconnectAttempts++;
-            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-            console.log(`🔄 Kết nối lại sau ${delay / 1000}s... (Lần thử: ${reconnectAttempts}/${maxReconnectAttempts})`);
-
-            reconnectTimeout = setTimeout(() => {
-                connectWebSocket();
-            }, delay);
-        } else {
-            console.log(`❌ Đã thử kết nối lại ${maxReconnectAttempts} lần, dừng lại.`);
-            currentData.trang_thai = "Lỗi kết nối";
-        }
+    ws.on('close', () => {
+        console.log("🔌 WebSocket bị đóng. Kết nối lại sau 5s…");
+        setTimeout(connectWebSocket, 5000);
     });
 
     ws.on('error', (err) => {
-        clearTimeout(connectionTimeout);
         console.error("❌ Lỗi WebSocket:", err.message);
-        currentData.trang_thai = `Lỗi: ${err.message}`;
-        if (ws) ws.terminate();
     });
+}
 
-    ws.on('pong', () => {
-        console.log("💚 Nhận pong heartbeat");
-    });
-} // <--- SỬA LỖI: Dấu } được di chuyển xuống đây để bao bọc toàn bộ logic WebSocket
-
-// ===== HTTP SERVER =====
+// HTTP server có hỗ trợ CORS cho https://tooltxwanin.site
 const server = http.createServer((req, res) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Origin", "https://tooltxwanin.site");
     res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
@@ -337,54 +562,21 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    if (req.url === "/taixiu" || req.url === "/") {
-        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify(currentData, null, 2));
-    } else if (req.url === "/status") {
-        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify({
-            status: isConnected ? "connected" : "disconnected",
-            reconnectAttempts: reconnectAttempts,
-            dataCount: totalsHistory.length,
-            lastUpdate: currentData.ngay
-        }));
+    if (req.url === "/taixiu") {
+        res.writeHead(200, {
+            "Content-Type": "application/json"
+        });
+        res.end(JSON.stringify(currentData));
     } else {
-        res.writeHead(404, { "Content-Type": "text/plain" });
-        res.end("404 Not Found");
+        res.writeHead(404, {
+            "Content-Type": "text/plain"
+        });
+        res.end("Không tìm thấy");
     }
 });
 
+// Khởi chạy server
 server.listen(PORT, () => {
     console.log(`🌐 Server đang chạy tại http://localhost:${PORT}`);
-    console.log(`📊 API endpoint: http://localhost:${PORT}/taixiu`);
-    console.log(`🔍 Status endpoint: http://localhost:${PORT}/status`);
-
-    connectWebSocket(); // Bắt đầu kết nối WebSocket
-
-    setInterval(() => {
-        if (!isConnected && reconnectAttempts < maxReconnectAttempts) {
-            console.log("🔄 Kiểm tra kết nối định kỳ...");
-            connectWebSocket();
-        }
-    }, 60000); // Kiểm tra mỗi 60 giây
-});
-
-// Xử lý tín hiệu thoát
-process.on('SIGINT', () => {
-    console.log('\n🛑 Đang thoát server…');
-    clearIntervals();
-    if (ws) ws.close();
-    server.close(() => {
-        console.log('✅ Server đã thoát');
-        process.exit(0);
-    });
-});
-
-process.on('SIGTERM', () => {
-    console.log('\n🛑 Nhận SIGTERM, đang thoát…');
-    clearIntervals();
-    if (ws) ws.close();
-    server.close(() => {
-        process.exit(0);
-    });
+    connectWebSocket();
 });
