@@ -1,8 +1,25 @@
-const http = require('http');
+const express = require('express');
+const cors = require('cors');
 const WebSocket = require('ws');
 
-const PORT = process.env.PORT || 10000;
+const app = express();
 
+const allowedOrigins = [
+  'https://tooltxwanin.site',
+  'http://localhost:3000'
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('CORS không được phép'));
+    }
+  }
+}));
+
+// Dữ liệu hiển thị ra frontend
 let currentData = {
   phien_truoc: null,
   ket_qua: "",
@@ -15,27 +32,14 @@ let currentData = {
   Id: "@ghetvietcode - Rinkivana"
 };
 
-const WS_URL = "wss://websocket.atpman.net/websocket";
-
-const HEADERS = {
-  "Host": "websocket.atpman.net",
-  "Origin": "https://play.789club.sx",
-  "User-Agent": "Mozilla/5.0",
-  "Accept-Encoding": "gzip, deflate, br, zstd",
-  "Accept-Language": "vi-VN,vi;q=0.9",
-  "Pragma": "no-cache",
-  "Cache-Control": "no-cache"
-};
-
-let lastEventId = 19;
 let history = [];
+let lastEventId = 19;
 
-// ✅ THUẬT TOÁN MỚI
+// Hàm dự đoán kết quả tiếp theo
 function predictNext(history) {
   if (history.length < 4) return history.at(-1) || "Tài";
 
   const last = history.at(-1);
-
   if (history.slice(-4).every(k => k === last)) return last;
 
   if (
@@ -68,7 +72,7 @@ function predictNext(history) {
   return (count["Tài"] || 0) > (count["Xỉu"] || 0) ? "Xỉu" : "Tài";
 }
 
-// ✅ LOGIN_MESSAGE thay thế đúng theo yêu cầu
+// Gói tin WebSocket
 const LOGIN_MESSAGE = [
   1, "MiniGame", "thatoidimoo11233", "112233",
   {
@@ -82,17 +86,22 @@ const LOGIN_MESSAGE = [
     signature: "5F953D843B438DD810A98D903AD3623CE98AED1745C3925EEAFD2A5BEB4D86A24ED0B97129E6AAB5DA1C3F73C2A236AE06D08EDDD937991260DFEA543E8F1C8818A651BDF4204E97A53F0461B306A95A6D7D56F435326270E9E4CB8084BB93969BFD4DB3CA8E519D079324E47110BCC23AB2139508D9E762407B76DE542D6E68"
   }
 ];
-
 const SUBSCRIBE_TX_RESULT = [6, "MiniGame", "taixiuUnbalancedPlugin", { cmd: 2000 }];
 const SUBSCRIBE_LOBBY = [6, "MiniGame", "lobbyPlugin", { cmd: 10001 }];
 
 function connectWebSocket() {
-  const ws = new WebSocket(WS_URL, { headers: HEADERS });
+  const ws = new WebSocket("wss://websocket.atpman.net/websocket", {
+    headers: {
+      "Host": "websocket.atpman.net",
+      "Origin": "https://play.789club.sx",
+      "User-Agent": "Mozilla/5.0"
+    }
+  });
 
   ws.on('open', () => {
-    console.log("✅ WebSocket đã kết nối");
-
+    console.log("[WS] Đã kết nối.");
     ws.send(JSON.stringify(LOGIN_MESSAGE));
+
     setTimeout(() => {
       ws.send(JSON.stringify(SUBSCRIBE_TX_RESULT));
       ws.send(JSON.stringify(SUBSCRIBE_LOBBY));
@@ -135,32 +144,37 @@ function connectWebSocket() {
             Id: "@ghetvietcode - Rinkivana"
           };
 
-          console.log("[✔️]", currentData);
+          console.log(`[✔️] Phiên ${sid} → ${ketqua} | Dự đoán tiếp: ${prediction}`);
         }
       }
     } catch (err) {
-      console.error("❌ Lỗi xử lý message:", err.message);
+      console.error("[ERR] Không đọc được tin nhắn:", err.message);
     }
   });
 
   ws.on('close', () => {
-    console.log("🔌 WebSocket đóng. Kết nối lại sau 5 giây...");
-    setTimeout(connectWebSocket, 5000);
+    console.log("[WS] Mất kết nối. Thử lại sau 3s...");
+    setTimeout(connectWebSocket, 3000);
   });
 
   ws.on('error', (err) => {
-    console.error("❌ Lỗi WebSocket:", err.message);
+    console.error("[WS] Lỗi:", err.message);
+    ws.close();
   });
 }
 
-// HTTP server trả JSON
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(currentData));
+// ✅ Route API
+app.get('/api/taixiu', (req, res) => {
+  res.json(currentData);
 });
 
-// Bắt đầu server và kết nối WebSocket
-server.listen(PORT, () => {
-  console.log(`🌐 Server đang chạy tại http://localhost:${PORT}`);
+app.get('/', (req, res) => {
+  res.send(`<h2>789Club API</h2><p>Server đang hoạt động!</p><a href="/api/taixiu">Xem dữ liệu JSON</a>`);
+});
+
+// ✅ Start server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`[INFO] Server chạy tại cổng ${PORT}`);
   connectWebSocket();
 });
