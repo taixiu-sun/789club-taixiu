@@ -4,6 +4,7 @@ const WebSocket = require('ws');
 
 const app = express();
 
+// Cấu hình CORS
 const allowedOrigins = [
   'https://tooltxwanin.site',
   'http://localhost:3000'
@@ -19,7 +20,7 @@ app.use(cors({
   }
 }));
 
-// Dữ liệu hiển thị ra frontend
+// Dữ liệu API trả về frontend
 let currentData = {
   phien_truoc: null,
   ket_qua: "",
@@ -35,7 +36,7 @@ let currentData = {
 let history = [];
 let lastEventId = 19;
 
-// Hàm dự đoán kết quả tiếp theo
+// Hàm dự đoán
 function predictNext(history) {
   if (history.length < 4) return history.at(-1) || "Tài";
 
@@ -81,11 +82,12 @@ const LOGIN_MESSAGE = [
       userId: "6ba5b041-a68d-4468-95d3-0bb2d8674512",
       username: "S8_thatoidimoo11233",
       timestamp: 1752497763866,
-      refreshToken: "c6c49a4ff8ca49ac87fcaf2543a96221.6f17553681b74176a4ebeb77f475f443"
+      refreshToken: "..."
     }),
-    signature: "5F953D843B438DD810A98D903AD3623CE98AED1745C3925EEAFD2A5BEB4D86A24ED0B97129E6AAB5DA1C3F73C2A236AE06D08EDDD937991260DFEA543E8F1C8818A651BDF4204E97A53F0461B306A95A6D7D56F435326270E9E4CB8084BB93969BFD4DB3CA8E519D079324E47110BCC23AB2139508D9E762407B76DE542D6E68"
+    signature: "..."
   }
 ];
+
 const SUBSCRIBE_TX_RESULT = [6, "MiniGame", "taixiuUnbalancedPlugin", { cmd: 2000 }];
 const SUBSCRIBE_LOBBY = [6, "MiniGame", "lobbyPlugin", { cmd: 10001 }];
 
@@ -163,7 +165,7 @@ function connectWebSocket() {
   });
 }
 
-// ✅ Route API
+// API route
 app.get('/api/taixiu', (req, res) => {
   res.json(currentData);
 });
@@ -172,7 +174,7 @@ app.get('/', (req, res) => {
   res.send(`<h2>789Club API</h2><p>Server đang hoạt động!</p><a href="/api/taixiu">Xem dữ liệu JSON</a>`);
 });
 
-// ✅ Start server
+// Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`[INFO] Server chạy tại cổng ${PORT}`);
