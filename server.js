@@ -5,7 +5,7 @@ const crypto = require('crypto');
 // Port server HTTP
 const PORT = process.env.PORT || 10000;
 
-// ===== BỘ THUẬT TOÁN DỰ ĐOÁN (CHUYỂN TỪ PYTHON) =====
+// ===== BỘ THUẬT TOÁN DỰ ĐOÁN (GỐC - KHÔNG CÒN ĐƯỢC DÙNG TRONG HÀM TỔNG HỢP) =====
 
 // --- Helper Functions ---
 function get_tai_xiu(total) {
@@ -304,8 +304,9 @@ function phan_tich_cau_sunwin(ds_tong) {
 }
 
 
-// --- HÀM TỔNG HỢP DỰ ĐOÁN ---
+// --- HÀM TỔNG HỢP DỰ ĐOÁN (ĐÃ ĐƯỢC THAY THẾ BẰNG LOGIC NGẪU NHIÊN) ---
 function du_doan_tong_hop(totals_list, kq_list, dice_list, ma_phien) {
+    // Luôn trả về "Chờ" nếu không có dữ liệu
     if (totals_list.length === 0) {
         return {
             prediction: "Chờ",
@@ -316,55 +317,32 @@ function du_doan_tong_hop(totals_list, kq_list, dice_list, ma_phien) {
             xiu_count: 0
         };
     }
-    const chi_tiet = {};
 
-    // V1 - 8
-    const [du1, ly1] = du_doan_v1(totals_list);
-    chi_tiet["v1"] = { du_doan: du1, ly_do: ly1 };
-    const [du2, tin2, ly2] = du_doan_v2(totals_list);
-    chi_tiet["v2"] = { du_doan: du2, tin_cay: `${tin2}%`, ly_do: ly2 };
-    const [du3, tin3, ly3] = du_doan_v3(totals_list);
-    chi_tiet["v3"] = { du_doan: du3, tin_cay: `${tin3}%`, ly_do: ly3 };
-    const [du4, tin4] = du_doan_v4(kq_list, totals_list);
-    chi_tiet["v4"] = { du_doan: du4, tin_cay: `${tin4}%` };
-    const tin5 = du_doan_phan_tram(ma_phien);
-    chi_tiet["v5"] = { du_doan: tin5 >= 50 ? "Tài" : "Xỉu", tin_cay: `${tin5}%` };
-    const du6 = du_doan_theo_xi_ngau(dice_list);
-    chi_tiet["v6"] = { du_doan: du6 };
-    const [du7, prob7] = du_doan_theo_xi_ngau_prob(dice_list);
-    chi_tiet["v7"] = { du_doan: du7, tin_cay: `${(prob7 * 100).toFixed(2)}%` };
-    const phan_tich = phan_tich_cau_sunwin(totals_list);
-    chi_tiet["v8"] = { du_doan: phan_tich.du_doan, tin_cay: phan_tich.tin_cay, ly_do: phan_tich.ly_do };
+    // Tạo dự đoán ngẫu nhiên
+    const random_choice = Math.random();
+    const final_prediction = random_choice < 0.5 ? "Tài" : "Xỉu";
 
-    // Tổng hợp kết quả gốc
-    const all_du_doan = Object.values(chi_tiet).map(v => v.du_doan).filter(d => d === "Tài" || d === "Xỉu");
-    const tai_count = all_du_doan.filter(d => d === "Tài").length;
-    const xiu_count = all_du_doan.filter(d => d === "Xỉu").length;
-    
-    let final_prediction_original = "Chờ";
-    if (tai_count > xiu_count) {
-        final_prediction_original = "Tài";
-    } else if (xiu_count > tai_count) {
-        final_prediction_original = "Xỉu";
-    }
+    // Tạo độ tin cậy ngẫu nhiên để trông "thật" hơn một chút
+    const random_confidence = Math.floor(Math.random() * 46) + 50; // Ngẫu nhiên từ 50% đến 95%
 
-    // ===== THỰC HIỆN ĐẢO NGƯỢC DỰ ĐOÁN (THEO YÊU CẦU) =====
-    let final_prediction_reversed = final_prediction_original;
-    let ket_luan_reversed = "⚖️ Tỉ lệ cân bằng, cân nhắc kỹ hoặc bỏ qua.";
+    // Cập nhật kết luận để phản ánh logic ngẫu nhiên
+    const ket_luan_random = `🎯 Dự đoán ngẫu nhiên: ${final_prediction}.`;
 
-    if (final_prediction_original === "Tài") {
-        final_prediction_reversed = "Xỉu";
-        ket_luan_reversed = `🎯 Nên đánh: XỈU (Đảo ngược từ dự đoán gốc: TÀI, dựa trên ${tai_count}/8 thuật toán)`;
-    } else if (final_prediction_original === "Xỉu") {
-        final_prediction_reversed = "Tài";
-        ket_luan_reversed = `🎯 Nên đánh: TÀI (Đảo ngược từ dự đoán gốc: XỈU, dựa trên ${xiu_count}/8 thuật toán)`;
-    }
+    // Cập nhật số đếm để phản ánh kết quả ngẫu nhiên
+    const tai_count = final_prediction === "Tài" ? 1 : 0;
+    const xiu_count = final_prediction === "Xỉu" ? 1 : 0;
 
     return {
-        prediction: final_prediction_reversed, // Trả về kết quả đã đảo ngược
-        tincay: `${((Math.max(tai_count, xiu_count) / 8) * 100).toFixed(1)}%`,
-        chi_tiet: chi_tiet,
-        ket_luan: ket_luan_reversed, // Trả về kết luận đã đảo ngược
+        prediction: final_prediction,
+        tincay: `${random_confidence}%`,
+        chi_tiet: {
+            random_logic: {
+                du_doan: final_prediction,
+                tin_cay: `${random_confidence}%`,
+                ly_do: "Thuật toán đã được thay thế bằng lựa chọn ngẫu nhiên (50/50)."
+            }
+        },
+        ket_luan: ket_luan_random,
         tai_count: tai_count,
         xiu_count: xiu_count
     };
@@ -478,7 +456,7 @@ function connectWebSocket() {
                         dice_list.shift();
                     }
 
-                    // Gọi bộ thuật toán dự đoán tổng hợp
+                    // Gọi bộ thuật toán dự đoán tổng hợp (phiên bản ngẫu nhiên)
                     const result = du_doan_tong_hop(totals_list, kq_list, dice_list, ma_phien_str);
 
                     // Cập nhật dữ liệu hiện tại để trả về qua API
@@ -495,7 +473,7 @@ function connectWebSocket() {
                     });
 
 
-                    console.log("🎲 Phiên mới:", sid, "| Kết quả:", `${tong} (${ketqua})`, "| Dự đoán (đã đảo ngược):", result.prediction, `(${result.tincay})`);
+                    console.log("🎲 Phiên mới:", sid, "| Kết quả:", `${tong} (${ketqua})`, "| Dự đoán (ngẫu nhiên):", result.prediction, `(${result.tincay})`);
                 }
             }
         } catch (err) {
