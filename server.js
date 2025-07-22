@@ -494,9 +494,9 @@ function connectWebSocket() {
     });
 }
 
-// HTTP server có hỗ trợ CORS cho https://tooltxwanin.site
+// HTTP server có hỗ trợ CORS cho https://hackgametx.fun
 const server = http.createServer((req, res) => {
-    res.setHeader("Access-Control-Allow-Origin", "https://tooltxwanin.site");
+    res.setHeader("Access-Control-Allow-Origin", "https://hackgametx.fun");
     res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
